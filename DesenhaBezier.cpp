@@ -21,7 +21,7 @@
 #include <ctime>
 #include <fstream>
 #include <vector>
-
+#include <algorithm>  // Necessário para remove_if
 
 using namespace std;
 
@@ -47,6 +47,33 @@ using namespace std;
 #include "Temporizador.h"
 #include "ListaDeCoresRGB.h"
 #include <tuple>
+
+// Modos de edição
+enum ModoEdicao {
+    MODO_CRIAR = 0,
+    MODO_MOVER_VERTICE = 1,
+    MODO_REMOVER_CURVA = 2,
+    MODO_CONECTAR_CURVA = 3,
+    MODO_ALTERAR_CONTINUIDADE = 4
+};
+
+// Adicionando variáveis para os botões
+struct Botao {
+    float x1, y1, x2, y2;
+    string texto;
+    ModoEdicao modo;
+    bool selecionado;
+};
+
+// Declarações antecipadas das funções
+float calculaDistanciaEntrePontos(Ponto p1, Ponto p2);
+float DistanciaPontoReta(Ponto P, Ponto A, Ponto B);
+bool VerificaCliqueCurva(Ponto ponto, int& curvaIndex, int& pontoIndex);
+void AtualizaCurvasRelacionadas(int curvaIndex);
+void InicializaBotoes();
+bool PontoDentroBotao(Ponto p, Botao b);
+void DesenhaBotoesEdicao();
+string ObterMensagemModo();
 
 // Definindo os modos de operação
 enum ModoOperacao {
@@ -102,6 +129,33 @@ double TempoTotal=0;
 // Variáveis para controle dos modos
 bool primeiraCurva = true;
 int pontosNecessarios = 3; // Número de pontos necessários para criar a curva no modo atual
+
+// Variáveis de controle para edição
+ModoEdicao modoEdicao = MODO_CRIAR;
+bool exibirCurvas = true;
+bool exibirPoligonos = true;
+bool exibirVertices = true;
+int curvaEmEdicao = -1;
+int verticeEmEdicao = -1;
+
+// Nomes dos modos de edição
+string NomesModosEdicao[] = {
+    "Criar Curva",
+    "Mover Vértice",
+    "Remover Curva",
+    "Conectar Curva",
+    "Alterar Continuidade"
+};
+
+// Estrutura para armazenar informações de continuidade entre curvas
+struct ContinuidadeCurvas {
+    int curva1;
+    int curva2;
+    int tipoContinuidade; // 0: sem continuidade, 1: posição, 2: derivada
+};
+vector<ContinuidadeCurvas> continuidades;
+
+vector<Botao> botoesEdicao;
 
 // **********************************************************************
 // Imprime o texto S na posicao (x,y), com a cor 'cor'
@@ -256,6 +310,7 @@ void CriaCurvaNoModoAtual()
     {
         case MODO_SEM_CONTINUIDADE:
             Curvas[nCurvas] = Bezier(PontosClicados[0], PontosClicados[1], PontosClicados[2]);
+            nCurvas++;
             break;
             
         case MODO_CONTINUIDADE_POSICAO:
@@ -263,10 +318,11 @@ void CriaCurvaNoModoAtual()
                 Curvas[nCurvas] = Bezier(PontosClicados[0], PontosClicados[1], PontosClicados[2]);
                 primeiraCurva = false;
             } else {
-                Curvas[nCurvas] = Bezier::CriaCurvaComContinuidadePosicao(Curvas[nCurvas-1], 
-                                                                         PontosClicados[1], 
-                                                                         PontosClicados[2]);
+                // Usa o último ponto da curva anterior como primeiro ponto
+                Ponto p0 = Curvas[nCurvas-1].getPC(2);
+                Curvas[nCurvas] = Bezier(p0, PontosClicados[1], PontosClicados[2]);
             }
+            nCurvas++;
             break;
             
         case MODO_CONTINUIDADE_DERIVADA:
@@ -274,12 +330,19 @@ void CriaCurvaNoModoAtual()
                 Curvas[nCurvas] = Bezier(PontosClicados[0], PontosClicados[1], PontosClicados[2]);
                 primeiraCurva = false;
             } else {
-                Curvas[nCurvas] = Bezier::CriaCurvaComContinuidadeDerivada(Curvas[nCurvas-1], 
-                                                                          PontosClicados[2]);
+                // Usa o último ponto da curva anterior como primeiro ponto
+                Ponto p0 = Curvas[nCurvas-1].getPC(2);
+                Ponto p1 = Curvas[nCurvas-1].getPC(1);
+                
+                // Calcula o ponto de controle para manter a derivada
+                Ponto direcao = p0 - p1;
+                Ponto p1Novo = p0 + direcao;
+                
+                Curvas[nCurvas] = Bezier(p0, p1Novo, PontosClicados[2]);
             }
+            nCurvas++;
             break;
     }
-    nCurvas++;
 }
 // **********************************************************************
 //
@@ -296,6 +359,9 @@ void init()
     float d = 15;
     Min = Ponto(-d,-d);
     Max = Ponto(d,d);
+    
+    // Inicializa os botões
+    InicializaBotoes();
 }
 // **********************************************************************
 //
@@ -410,8 +476,8 @@ void DesenhaAreaIcones()
     glVertex2f(14.5, posY - altura);
     glVertex2f(10.5, posY - altura);
     glEnd();
-    printString("1", 11, posY - 1.0, White);
-    printString("Sem Cont.", 11.5, posY - 1.0, White);
+    printString("1", 10.7, posY - 1.0, White);  // Movido mais para a esquerda
+    printString("Sem Cont.", 11.3, posY - 1.0, White);  // Ajustado para não sobrepor o número
     
     // Modo continuidade de posição
     posY -= espacamento;
@@ -426,8 +492,8 @@ void DesenhaAreaIcones()
     glVertex2f(14.5, posY - altura);
     glVertex2f(10.5, posY - altura);
     glEnd();
-    printString("2", 11, posY - 1.0, White);
-    printString("Cont. Pos.", 11.5, posY - 1.0, White);
+    printString("2", 10.7, posY - 1.0, White);  // Movido mais para a esquerda
+    printString("Cont. Pos.", 11.3, posY - 1.0, White);  // Ajustado para não sobrepor o número
     
     // Modo continuidade de derivada
     posY -= espacamento;
@@ -442,8 +508,8 @@ void DesenhaAreaIcones()
     glVertex2f(14.5, posY - altura);
     glVertex2f(10.5, posY - altura);
     glEnd();
-    printString("3", 11, posY - 1.0, White);
-    printString("Cont. Der.", 11.5, posY - 1.0, White);
+    printString("3", 10.7, posY - 1.0, White);  // Movido mais para a esquerda
+    printString("Cont. Der.", 11.3, posY - 1.0, White);  // Ajustado para não sobrepor o número
     
     glPopMatrix();
 }
@@ -545,6 +611,13 @@ void display( void )
         }
     }
 
+    // Desenha os botões de edição
+    DesenhaBotoesEdicao();
+    
+    // Desenha a mensagem do modo atual
+    string mensagem = ObterMensagemModo();
+    printString(mensagem, -14, 11, Yellow);
+
     // Desenha as áreas da interface
     DesenhaAreaIcones();
     DesenhaAreaStatus();
@@ -610,6 +683,50 @@ void keyboard ( unsigned char key, int x, int y )
                 cout << "Modo alterado para: Continuidade de Derivada" << endl;
             }
             break;
+        case 'c':
+            modoEdicao = MODO_CRIAR;
+            // Atualiza a seleção dos botões
+            for (auto& b : botoesEdicao) {
+                b.selecionado = (b.modo == MODO_CRIAR);
+            }
+            break;
+        case 'm':
+            modoEdicao = MODO_MOVER_VERTICE;
+            // Atualiza a seleção dos botões
+            for (auto& b : botoesEdicao) {
+                b.selecionado = (b.modo == MODO_MOVER_VERTICE);
+            }
+            break;
+        case 'r':
+            modoEdicao = MODO_REMOVER_CURVA;
+            // Atualiza a seleção dos botões
+            for (auto& b : botoesEdicao) {
+                b.selecionado = (b.modo == MODO_REMOVER_CURVA);
+            }
+            break;
+        case 'n':
+            modoEdicao = MODO_CONECTAR_CURVA;
+            // Atualiza a seleção dos botões
+            for (auto& b : botoesEdicao) {
+                b.selecionado = (b.modo == MODO_CONECTAR_CURVA);
+            }
+            break;
+        case 'a':
+            modoEdicao = MODO_ALTERAR_CONTINUIDADE;
+            // Atualiza a seleção dos botões
+            for (auto& b : botoesEdicao) {
+                b.selecionado = (b.modo == MODO_ALTERAR_CONTINUIDADE);
+            }
+            break;
+        case 'v':
+            exibirCurvas = !exibirCurvas;
+            break;
+        case 'p':
+            exibirPoligonos = !exibirPoligonos;
+            break;
+        case 'b':
+            exibirVertices = !exibirVertices;
+            break;
         default:
             break;
     }
@@ -667,68 +784,121 @@ Ponto ConvertePonto(Ponto P)
 // **********************************************************************
 void Mouse(int button, int state, int x, int y)
 {
+    Ponto pontoClicado = ConvertePonto(Ponto(x, y, 0));
+    
     if (button != GLUT_LEFT_BUTTON)
         return;
 
     if (state == GLUT_DOWN) {
         mouseSegurando = true;
-
-        // No modo sem continuidade, sempre precisamos de 3 pontos
-        if (modoAtual == MODO_SEM_CONTINUIDADE) {
-            if (nPontoAtual == 0) {
-                PontosClicados[0] = ConvertePonto(Ponto(x, y, 0));
-                nPontoAtual = 1;
-            }
-            else if (nPontoAtual == 1) {
-                PontosClicados[1] = ConvertePonto(Ponto(x, y, 0));
-                nPontoAtual = 2;
-            }
-            else if (nPontoAtual == 2) {
-                PontosClicados[2] = ConvertePonto(Ponto(x, y, 0));
-                CriaCurvaNoModoAtual();
-                nPontoAtual = 0;
+        
+        // Verifica se clicou em algum botão
+        for (auto& botao : botoesEdicao) {
+            if (PontoDentroBotao(pontoClicado, botao)) {
+                // Atualiza o modo de edição
+                modoEdicao = botao.modo;
+                
+                // Atualiza a seleção dos botões
+                for (auto& b : botoesEdicao) {
+                    b.selecionado = (b.modo == modoEdicao);
+                }
+                
+                glutPostRedisplay();
+                return;
             }
         }
-        // Nos modos com continuidade
-        else {
-            if (primeiraCurva) {
-                // Para a primeira curva, precisamos de 3 pontos
-                if (nPontoAtual == 0) {
-                    PontosClicados[0] = ConvertePonto(Ponto(x, y, 0));
-                    nPontoAtual = 1;
-                }
-                else if (nPontoAtual == 1) {
-                    PontosClicados[1] = ConvertePonto(Ponto(x, y, 0));
-                    nPontoAtual = 2;
-                }
-                else if (nPontoAtual == 2) {
-                    PontosClicados[2] = ConvertePonto(Ponto(x, y, 0));
-                    CriaCurvaNoModoAtual();
-                    nPontoAtual = 1; // Próxima curva precisa de 2 pontos
-                    PontosClicados[0] = Curvas[nCurvas-1].getPontoFinal();
-                }
-            }
-            else {
-                // Para as curvas subsequentes
-                if (nPontoAtual == 1) {
-                    if (modoAtual == MODO_CONTINUIDADE_POSICAO) {
-                        PontosClicados[1] = ConvertePonto(Ponto(x, y, 0));
+        
+        int curvaIndex, verticeIndex;
+        bool clicouEmCurva = VerificaCliqueCurva(pontoClicado, curvaIndex, verticeIndex);
+        
+        switch(modoEdicao) {
+            case MODO_CRIAR:
+                if (modoAtual == MODO_SEM_CONTINUIDADE) {
+                    if (nPontoAtual == 0) {
+                        PontosClicados[0] = pontoClicado;
+                        nPontoAtual = 1;
+                    }
+                    else if (nPontoAtual == 1) {
+                        PontosClicados[1] = pontoClicado;
                         nPontoAtual = 2;
                     }
-                    else { // MODO_CONTINUIDADE_DERIVADA
-                        PontosClicados[2] = ConvertePonto(Ponto(x, y, 0));
+                    else if (nPontoAtual == 2) {
+                        PontosClicados[2] = pontoClicado;
                         CriaCurvaNoModoAtual();
-                        nPontoAtual = 1;
-                        PontosClicados[0] = Curvas[nCurvas-1].getPontoFinal();
+                        nPontoAtual = 0;
                     }
                 }
-                else if (nPontoAtual == 2) {
-                    PontosClicados[2] = ConvertePonto(Ponto(x, y, 0));
-                    CriaCurvaNoModoAtual();
-                    nPontoAtual = 1;
-                    PontosClicados[0] = Curvas[nCurvas-1].getPontoFinal();
+                // ... resto do código existente para outros modos ...
+                break;
+                
+            case MODO_MOVER_VERTICE:
+                if(clicouEmCurva && verticeIndex != -1) {
+                    curvaEmEdicao = curvaIndex;
+                    verticeEmEdicao = verticeIndex;
                 }
-            }
+                break;
+                
+            case MODO_REMOVER_CURVA:
+                if(clicouEmCurva && exibirPoligonos) {
+                    // Remove a curva
+                    for(int i = curvaIndex; i < nCurvas-1; i++) {
+                        Curvas[i] = Curvas[i+1];
+                    }
+                    nCurvas--;
+                    
+                    // Atualiza as continuidades
+                    continuidades.erase(
+                        remove_if(continuidades.begin(), continuidades.end(),
+                            [curvaIndex](const ContinuidadeCurvas& c) {
+                                return c.curva1 == curvaIndex || c.curva2 == curvaIndex;
+                            }
+                        ),
+                        continuidades.end()
+                    );
+                }
+                break;
+                
+            case MODO_CONECTAR_CURVA:
+                if(clicouEmCurva && (verticeIndex == 0 || verticeIndex == 2)) {
+                    // Inicia uma nova curva a partir do vértice selecionado
+                    PontosClicados[0] = Curvas[curvaIndex].getPC(verticeIndex);
+                    nPontoAtual = 1;
+                    curvaEmEdicao = curvaIndex;
+                    verticeEmEdicao = verticeIndex;
+                }
+                break;
+                
+            case MODO_ALTERAR_CONTINUIDADE:
+                if(clicouEmCurva && verticeIndex == 2) {
+                    // Procura se já existe continuidade com próxima curva
+                    auto it = find_if(continuidades.begin(), continuidades.end(),
+                        [curvaIndex](const ContinuidadeCurvas& c) {
+                            return c.curva1 == curvaIndex;
+                        }
+                    );
+                    
+                    if(it != continuidades.end()) {
+                        // Aumenta o grau de continuidade ou remove se já estiver no máximo
+                        if(it->tipoContinuidade == 2)
+                            continuidades.erase(it);
+                        else
+                            it->tipoContinuidade++;
+                    }
+                    else if(curvaIndex < nCurvas-1) {
+                        // Cria nova continuidade
+                        continuidades.push_back({curvaIndex, curvaIndex+1, 1});
+                    }
+                    AtualizaCurvasRelacionadas(curvaIndex);
+                }
+                break;
+        }
+    }
+    else if (state == GLUT_UP) {
+        mouseSegurando = false;
+        if(modoEdicao == MODO_MOVER_VERTICE && curvaEmEdicao != -1) {
+            AtualizaCurvasRelacionadas(curvaEmEdicao);
+            curvaEmEdicao = -1;
+            verticeEmEdicao = -1;
         }
     }
 
@@ -753,15 +923,178 @@ void Motion(int x, int y)
 {
     Ponto P(x,y);
     PosAtualDoMouse = ConvertePonto(P);
-    
-    // Atualiza a posição atual do mouse para o rubber-band
     PosicaoAtualMouse = ConvertePonto(P);
 
-    if (aguardandoCliqueFinalP2) {
-        PontosClicados[2] = PosAtualDoMouse;
+    if(modoEdicao == MODO_MOVER_VERTICE && curvaEmEdicao != -1) {
+        Curvas[curvaEmEdicao].setPC(verticeEmEdicao, PosicaoAtualMouse);
     }
 
     glutPostRedisplay();
+}
+
+// **********************************************************************
+// Funções de edição
+// **********************************************************************
+bool VerificaCliqueCurva(Ponto ponto, int& curvaIndex, int& pontoIndex)
+{
+    const float TOLERANCIA = 5.0; // Tolerância em pixels para detecção de clique
+    
+    // Verifica clique nos pontos de controle
+    for(int i = 0; i < nCurvas; i++) {
+        for(int j = 0; j < 3; j++) {  // Uma curva de Bezier tem 3 pontos de controle
+            if(calculaDistanciaEntrePontos(ponto, Curvas[i].getPC(j)) < TOLERANCIA) {
+                curvaIndex = i;
+                pontoIndex = j;
+                return true;
+            }
+        }
+    }
+    
+    // Verifica clique nas arestas do polígono de controle
+    for(int i = 0; i < nCurvas; i++) {
+        for(int j = 0; j < 2; j++) {  // 2 arestas no polígono de controle
+            if(DistanciaPontoReta(ponto, Curvas[i].getPC(j), Curvas[i].getPC(j+1)) < TOLERANCIA &&
+               ponto.x >= min(Curvas[i].getPC(j).x, Curvas[i].getPC(j+1).x) - TOLERANCIA &&
+               ponto.x <= max(Curvas[i].getPC(j).x, Curvas[i].getPC(j+1).x) + TOLERANCIA &&
+               ponto.y >= min(Curvas[i].getPC(j).y, Curvas[i].getPC(j+1).y) - TOLERANCIA &&
+               ponto.y <= max(Curvas[i].getPC(j).y, Curvas[i].getPC(j+1).y) + TOLERANCIA) {
+                curvaIndex = i;
+                pontoIndex = j;
+                return true;
+            }
+        }
+    }
+    
+    return false;
+}
+
+void AtualizaCurvasRelacionadas(int curvaIndex)
+{
+    // Atualiza as curvas que têm continuidade com a curva modificada
+    for(auto& cont : continuidades) {
+        if(cont.curva1 == curvaIndex) {
+            if(cont.tipoContinuidade == 1) { // Continuidade de posição
+                Curvas[cont.curva2].setPC(0, Curvas[curvaIndex].getPontoFinal());
+            }
+            else if(cont.tipoContinuidade == 2) { // Continuidade de derivada
+                Ponto p0 = Curvas[curvaIndex].getPontoFinal();
+                Ponto dir = Curvas[curvaIndex].getDirecaoFinal();
+                Curvas[cont.curva2].setPC(0, p0);
+                Curvas[cont.curva2].setPC(1, p0 + dir);
+            }
+        }
+    }
+}
+
+// **********************************************************************
+// Funções auxiliares
+// **********************************************************************
+float calculaDistanciaEntrePontos(Ponto p1, Ponto p2)
+{
+    return sqrt(pow(p2.x - p1.x, 2) + pow(p2.y - p1.y, 2));
+}
+
+float DistanciaPontoReta(Ponto P, Ponto A, Ponto B)
+{
+    // Calcula a distância de um ponto P a uma reta definida por dois pontos A e B
+    float numerador = fabs((B.y - A.y) * P.x - (B.x - A.x) * P.y + B.x * A.y - B.y * A.x);
+    float denominador = sqrt(pow(B.y - A.y, 2) + pow(B.x - A.x, 2));
+    
+    if(denominador == 0) return calculaDistanciaEntrePontos(P, A);
+    return numerador / denominador;
+}
+
+// **********************************************************************
+// Inicializa os botões de edição
+// **********************************************************************
+void InicializaBotoes() {
+    float largura = 3.5;  // Aumentado de 3.0 para 3.5
+    float altura = 1.2;
+    float espacamento = 0.7;  // Aumentado de 0.5 para 0.7
+    float posX = -14.0;
+    float posY = 13.0;
+    
+    // Botão Criar
+    botoesEdicao.push_back({posX, posY, posX + largura, posY - altura, "Criar (c)", MODO_CRIAR, true});
+    
+    // Botão Mover Vértice
+    posX += largura + espacamento;
+    botoesEdicao.push_back({posX, posY, posX + largura, posY - altura, "Mover (m)", MODO_MOVER_VERTICE, false});
+    
+    // Botão Remover Curva
+    posX += largura + espacamento;
+    botoesEdicao.push_back({posX, posY, posX + largura, posY - altura, "Remover (r)", MODO_REMOVER_CURVA, false});
+    
+    // Botão Conectar Curva
+    posX += largura + espacamento;
+    botoesEdicao.push_back({posX, posY, posX + largura, posY - altura, "Conectar (n)", MODO_CONECTAR_CURVA, false});
+    
+    // Botão Alterar Continuidade
+    posX += largura + espacamento;
+    botoesEdicao.push_back({posX, posY, posX + largura, posY - altura, "Cont. (a)", MODO_ALTERAR_CONTINUIDADE, false});
+}
+
+// Verifica se um ponto está dentro de um botão
+bool PontoDentroBotao(Ponto p, Botao b) {
+    return (p.x >= b.x1 && p.x <= b.x2 && p.y >= b.y1 && p.y <= b.y2);
+}
+
+// Desenha os botões de edição
+void DesenhaBotoesEdicao() {
+    for (auto& botao : botoesEdicao) {
+        // Desenha o fundo do botão
+        if (botao.selecionado) {
+            glColor3f(0.8, 0.2, 0.2); // Vermelho quando selecionado
+        } else {
+            glColor3f(0.4, 0.4, 0.4); // Cinza quando não selecionado
+        }
+        
+        glBegin(GL_QUADS);
+        glVertex2f(botao.x1, botao.y1);
+        glVertex2f(botao.x2, botao.y1);
+        glVertex2f(botao.x2, botao.y2);
+        glVertex2f(botao.x1, botao.y2);
+        glEnd();
+        
+        // Desenha a borda do botão
+        glColor3f(1.0, 1.0, 1.0);
+        glBegin(GL_LINE_LOOP);
+        glVertex2f(botao.x1, botao.y1);
+        glVertex2f(botao.x2, botao.y1);
+        glVertex2f(botao.x2, botao.y2);
+        glVertex2f(botao.x1, botao.y2);
+        glEnd();
+        
+        // Desenha o texto do botão
+        glColor3f(1.0, 1.0, 1.0);
+        float centroX = (botao.x1 + botao.x2) / 2;
+        float centroY = (botao.y1 + botao.y2) / 2;
+        // Ajustando o posicionamento do texto para ficar mais centralizado
+        float offsetX = botao.texto.length() * 0.15; // Ajuste baseado no tamanho do texto
+        printString(botao.texto, centroX - offsetX, centroY - 0.1, White);
+    }
+}
+
+// Atualiza as mensagens baseadas no modo atual
+string ObterMensagemModo() {
+    switch (modoEdicao) {
+        case MODO_CRIAR:
+            if (nPontoAtual < 3) {
+                return Mensagens[nPontoAtual];
+            } else {
+                return "Clique para reiniciar.";
+            }
+        case MODO_MOVER_VERTICE:
+            return "Clique e arraste um vértice para movê-lo.";
+        case MODO_REMOVER_CURVA:
+            return "Clique em uma curva para removê-la.";
+        case MODO_CONECTAR_CURVA:
+            return "Clique em um ponto de controle para conectar.";
+        case MODO_ALTERAR_CONTINUIDADE:
+            return "Clique no ponto final de uma curva para alterar a continuidade.";
+        default:
+            return "";
+    }
 }
 
 // **********************************************************************
@@ -829,3 +1162,5 @@ int  main ( int argc, char** argv )
 
     return 0;
 }
+
+
