@@ -14,7 +14,6 @@
 //
 //  Para rodar em um terminal Windows, digite
 //           mingw32-make -f Makefile.mk 
-//
 
 #include <iostream>
 #include <cmath>
@@ -48,6 +47,8 @@ using namespace std;
 #include "ListaDeCoresRGB.h"
 #include <tuple>
 
+#define MAX 100  // Definindo a constante MAX
+
 // Modos de edição
 enum ModoEdicao {
     MODO_CRIAR = 0,
@@ -74,6 +75,7 @@ void InicializaBotoes();
 bool PontoDentroBotao(Ponto p, Botao b);
 void DesenhaBotoesEdicao();
 string ObterMensagemModo();
+void PreservaEstadoAoMudarModo(ModoEdicao novoModo);
 
 // Definindo os modos de operação
 enum ModoOperacao {
@@ -156,6 +158,10 @@ struct ContinuidadeCurvas {
 vector<ContinuidadeCurvas> continuidades;
 
 vector<Botao> botoesEdicao;
+
+// Adicionando variável para rastrear o ponto clicado
+Ponto pontoClicado;  // Ponto onde o mouse foi clicado
+Ponto Curva[MAX];  // Array para armazenar pontos da curva
 
 // **********************************************************************
 // Imprime o texto S na posicao (x,y), com a cor 'cor'
@@ -646,6 +652,30 @@ void ContaTempo(double tempo)
         }
     }
 }
+
+// **********************************************************************
+// Função para preservar o estado ao mudar de modo
+// **********************************************************************
+void PreservaEstadoAoMudarModo(ModoEdicao novoModo) {
+    // Se estiver no meio de criar uma curva, preserva os pontos
+    if (modoEdicao == MODO_CRIAR && nPontoAtual > 0) {
+        // Mantém os pontos clicados
+        return;
+    }
+    
+    // Se estiver movendo um vértice, finaliza a operação
+    if (modoEdicao == MODO_MOVER_VERTICE && curvaEmEdicao != -1) {
+        AtualizaCurvasRelacionadas(curvaEmEdicao);
+        curvaEmEdicao = -1;
+        verticeEmEdicao = -1;
+    }
+    
+    // Reseta o estado de edição
+    nPontoAtual = 0;
+    curvaEmEdicao = -1;
+    verticeEmEdicao = -1;
+}
+
 // **********************************************************************
 //  void keyboard ( unsigned char key, int x, int y )
 // **********************************************************************
@@ -653,81 +683,72 @@ void keyboard ( unsigned char key, int x, int y )
 {
     switch ( key )
     {
-        case 27:        // Termina o programa qdo
-            exit ( 0 );   // a tecla ESC for pressionada
-            break;
-        case 't':
-            ContaTempo(3);
-            break;
-        case ' ':
-            desenha = !desenha;
-            break;
-        case '1':
-            if (modoAtual != MODO_SEM_CONTINUIDADE) {
-                modoAtual = MODO_SEM_CONTINUIDADE;
-                ReiniciaEstado();
-                cout << "Modo alterado para: Sem Continuidade" << endl;
-            }
-            break;
-        case '2':
-            if (modoAtual != MODO_CONTINUIDADE_POSICAO) {
-                modoAtual = MODO_CONTINUIDADE_POSICAO;
-                ReiniciaEstado();
-                cout << "Modo alterado para: Continuidade de Posição" << endl;
-            }
-            break;
-        case '3':
-            if (modoAtual != MODO_CONTINUIDADE_DERIVADA) {
-                modoAtual = MODO_CONTINUIDADE_DERIVADA;
-                ReiniciaEstado();
-                cout << "Modo alterado para: Continuidade de Derivada" << endl;
-            }
+        case 27:     // Tecla "ESC" - encerra o programa
+            exit ( 0 );
             break;
         case 'c':
+        case 'C':
+            PreservaEstadoAoMudarModo(MODO_CRIAR);
             modoEdicao = MODO_CRIAR;
-            // Atualiza a seleção dos botões
             for (auto& b : botoesEdicao) {
                 b.selecionado = (b.modo == MODO_CRIAR);
             }
             break;
         case 'm':
+        case 'M':
+            PreservaEstadoAoMudarModo(MODO_MOVER_VERTICE);
             modoEdicao = MODO_MOVER_VERTICE;
-            // Atualiza a seleção dos botões
             for (auto& b : botoesEdicao) {
                 b.selecionado = (b.modo == MODO_MOVER_VERTICE);
             }
             break;
         case 'r':
+        case 'R':
+            PreservaEstadoAoMudarModo(MODO_REMOVER_CURVA);
             modoEdicao = MODO_REMOVER_CURVA;
-            // Atualiza a seleção dos botões
             for (auto& b : botoesEdicao) {
                 b.selecionado = (b.modo == MODO_REMOVER_CURVA);
             }
             break;
         case 'n':
+        case 'N':
+            PreservaEstadoAoMudarModo(MODO_CONECTAR_CURVA);
             modoEdicao = MODO_CONECTAR_CURVA;
-            // Atualiza a seleção dos botões
             for (auto& b : botoesEdicao) {
                 b.selecionado = (b.modo == MODO_CONECTAR_CURVA);
             }
             break;
         case 'a':
+        case 'A':
+            PreservaEstadoAoMudarModo(MODO_ALTERAR_CONTINUIDADE);
             modoEdicao = MODO_ALTERAR_CONTINUIDADE;
-            // Atualiza a seleção dos botões
             for (auto& b : botoesEdicao) {
                 b.selecionado = (b.modo == MODO_ALTERAR_CONTINUIDADE);
             }
             break;
+        case '1':
+            modoAtual = MODO_SEM_CONTINUIDADE;
+            primeiraCurva = true;
+            break;
+        case '2':
+            modoAtual = MODO_CONTINUIDADE_POSICAO;
+            primeiraCurva = true;
+            break;
+        case '3':
+            modoAtual = MODO_CONTINUIDADE_DERIVADA;
+            primeiraCurva = true;
+            break;
         case 'v':
-            exibirCurvas = !exibirCurvas;
+        case 'V':
+            exibirVertices = !exibirVertices;
             break;
         case 'p':
+        case 'P':
             exibirPoligonos = !exibirPoligonos;
             break;
         case 'b':
-            exibirVertices = !exibirVertices;
-            break;
-        default:
+        case 'B':
+            exibirCurvas = !exibirCurvas;
             break;
     }
     glutPostRedisplay();
@@ -784,7 +805,8 @@ Ponto ConvertePonto(Ponto P)
 // **********************************************************************
 void Mouse(int button, int state, int x, int y)
 {
-    Ponto pontoClicado = ConvertePonto(Ponto(x, y, 0));
+    Ponto P = ConvertePonto(Ponto(x, y, 0));
+    pontoClicado = P;  // Atualiza o ponto clicado
     
     if (button != GLUT_LEFT_BUTTON)
         return;
@@ -792,9 +814,12 @@ void Mouse(int button, int state, int x, int y)
     if (state == GLUT_DOWN) {
         mouseSegurando = true;
         
-        // Verifica se clicou em algum botão
+        // Verifica se clicou em algum botão de edição
         for (auto& botao : botoesEdicao) {
             if (PontoDentroBotao(pontoClicado, botao)) {
+                // Preserva o estado antes de mudar o modo
+                PreservaEstadoAoMudarModo(botao.modo);
+                
                 // Atualiza o modo de edição
                 modoEdicao = botao.modo;
                 
@@ -806,6 +831,40 @@ void Mouse(int button, int state, int x, int y)
                 glutPostRedisplay();
                 return;
             }
+        }
+        
+        // Verifica se clicou nos botões de modo
+        float posY = 11;
+        float altura = 1.5;
+        float espacamento = 2.0;
+        
+        // Botão modo sem continuidade
+        if (pontoClicado.x >= 10.5 && pontoClicado.x <= 14.5 &&
+            pontoClicado.y >= posY - altura && pontoClicado.y <= posY) {
+            modoAtual = MODO_SEM_CONTINUIDADE;
+            primeiraCurva = true;
+            glutPostRedisplay();
+            return;
+        }
+        
+        // Botão modo continuidade de posição
+        posY -= espacamento;
+        if (pontoClicado.x >= 10.5 && pontoClicado.x <= 14.5 &&
+            pontoClicado.y >= posY - altura && pontoClicado.y <= posY) {
+            modoAtual = MODO_CONTINUIDADE_POSICAO;
+            primeiraCurva = true;
+            glutPostRedisplay();
+            return;
+        }
+        
+        // Botão modo continuidade de derivada
+        posY -= espacamento;
+        if (pontoClicado.x >= 10.5 && pontoClicado.x <= 14.5 &&
+            pontoClicado.y >= posY - altura && pontoClicado.y <= posY) {
+            modoAtual = MODO_CONTINUIDADE_DERIVADA;
+            primeiraCurva = true;
+            glutPostRedisplay();
+            return;
         }
         
         int curvaIndex, verticeIndex;
@@ -828,7 +887,78 @@ void Mouse(int button, int state, int x, int y)
                         nPontoAtual = 0;
                     }
                 }
-                // ... resto do código existente para outros modos ...
+                else if (modoAtual == MODO_CONTINUIDADE_POSICAO) {
+                    if (primeiraCurva) {
+                        // Primeira curva no modo de continuidade por posição
+                        if (nPontoAtual == 0) {
+                            PontosClicados[0] = pontoClicado;
+                            nPontoAtual = 1;
+                        }
+                        else if (nPontoAtual == 1) {
+                            PontosClicados[1] = pontoClicado;
+                            nPontoAtual = 2;
+                        }
+                        else if (nPontoAtual == 2) {
+                            PontosClicados[2] = pontoClicado;
+                            CriaCurvaNoModoAtual();
+                            nPontoAtual = 0;
+                        }
+                    } else {
+                        // Continuando a partir da última curva
+                        if (nPontoAtual == 0) {
+                            // O primeiro ponto é o último ponto da curva anterior
+                            PontosClicados[0] = Curvas[nCurvas-1].getPC(2);
+                            nPontoAtual = 1;
+                        }
+                        else if (nPontoAtual == 1) {
+                            PontosClicados[1] = pontoClicado;
+                            nPontoAtual = 2;
+                        }
+                        else if (nPontoAtual == 2) {
+                            PontosClicados[2] = pontoClicado;
+                            CriaCurvaNoModoAtual();
+                            nPontoAtual = 0;
+                        }
+                    }
+                }
+                else if (modoAtual == MODO_CONTINUIDADE_DERIVADA) {
+                    if (primeiraCurva) {
+                        // Primeira curva no modo de continuidade por derivada
+                        if (nPontoAtual == 0) {
+                            PontosClicados[0] = pontoClicado;
+                            nPontoAtual = 1;
+                        }
+                        else if (nPontoAtual == 1) {
+                            PontosClicados[1] = pontoClicado;
+                            nPontoAtual = 2;
+                        }
+                        else if (nPontoAtual == 2) {
+                            PontosClicados[2] = pontoClicado;
+                            CriaCurvaNoModoAtual();
+                            nPontoAtual = 0;
+                        }
+                    } else {
+                        // Continuando a partir da última curva
+                        if (nPontoAtual == 0) {
+                            // O primeiro ponto é o último ponto da curva anterior
+                            PontosClicados[0] = Curvas[nCurvas-1].getPC(2);
+                            nPontoAtual = 1;
+                        }
+                        else if (nPontoAtual == 1) {
+                            // O segundo ponto é calculado para manter a derivada
+                            Ponto p0 = Curvas[nCurvas-1].getPC(2);
+                            Ponto p1 = Curvas[nCurvas-1].getPC(1);
+                            Ponto direcao = p0 - p1;
+                            PontosClicados[1] = p0 + direcao;
+                            nPontoAtual = 2;
+                        }
+                        else if (nPontoAtual == 2) {
+                            PontosClicados[2] = pontoClicado;
+                            CriaCurvaNoModoAtual();
+                            nPontoAtual = 0;
+                        }
+                    }
+                }
                 break;
                 
             case MODO_MOVER_VERTICE:
@@ -921,14 +1051,15 @@ void PassiveMotion(int x, int y)
 // **********************************************************************
 void Motion(int x, int y)
 {
-    Ponto P(x,y);
-    PosAtualDoMouse = ConvertePonto(P);
-    PosicaoAtualMouse = ConvertePonto(P);
-
+    Ponto P = ConvertePonto(Ponto(x,y));
+    pontoClicado = P;  // Atualiza o ponto clicado
+    PosAtualDoMouse = P;
+    PosicaoAtualMouse = P;
+    
     if(modoEdicao == MODO_MOVER_VERTICE && curvaEmEdicao != -1) {
         Curvas[curvaEmEdicao].setPC(verticeEmEdicao, PosicaoAtualMouse);
     }
-
+    
     glutPostRedisplay();
 }
 
