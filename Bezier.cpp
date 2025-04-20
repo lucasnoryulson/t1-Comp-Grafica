@@ -111,3 +111,37 @@ void Bezier::TracaPoligonoDeControle()
     glEnd();
     
 }
+
+// **********************************************************************
+void Bezier::setPC(int i, Ponto P)
+{
+    if (i >= 0 && i < 3)
+        Coords[i] = P;
+}
+
+// **********************************************************************
+// Cria uma nova curva mantendo continuidade de posição com a curva anterior
+// **********************************************************************
+Bezier Bezier::CriaCurvaComContinuidadePosicao(const Bezier& curvaAnterior, Ponto P1, Ponto P2)
+{
+    // O primeiro ponto da nova curva é o último ponto da curva anterior
+    Ponto P0 = curvaAnterior.Coords[2];
+    return Bezier(P0, P1, P2);
+}
+
+// **********************************************************************
+// Cria uma nova curva mantendo continuidade de derivada com a curva anterior
+// **********************************************************************
+Bezier Bezier::CriaCurvaComContinuidadeDerivada(const Bezier& curvaAnterior, Ponto P2)
+{
+    // O primeiro ponto da nova curva é o último ponto da curva anterior
+    Ponto P0 = curvaAnterior.Coords[2];
+    
+    // Para manter a continuidade da derivada, o primeiro vetor de controle
+    // da nova curva deve seguir a mesma direção do último vetor de controle
+    // da curva anterior
+    Ponto direcao = curvaAnterior.Coords[2] - curvaAnterior.Coords[1];
+    Ponto P1 = P0 + direcao;
+    
+    return Bezier(P0, P1, P2);
+}

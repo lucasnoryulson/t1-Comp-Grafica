@@ -48,6 +48,23 @@ using namespace std;
 #include "ListaDeCoresRGB.h"
 #include <tuple>
 
+// Definindo os modos de operação
+enum ModoOperacao {
+    MODO_SEM_CONTINUIDADE = 0,
+    MODO_CONTINUIDADE_POSICAO = 1,
+    MODO_CONTINUIDADE_DERIVADA = 2
+};
+
+// Variável para armazenar o modo atual
+ModoOperacao modoAtual = MODO_SEM_CONTINUIDADE;
+
+// Nomes dos modos para exibição
+string NomesModos[] = {
+    "Modo Sem Continuidade",
+    "Modo Continuidade de Posição",
+    "Modo Continuidade de Derivada"
+};
+
 std::tuple<float, float> rastroMouse;
 
 bool aguardandoCliqueFinalP2 = false;
@@ -81,6 +98,10 @@ Ponto PosicaoAtualMouse;
 
 double nFrames=0;
 double TempoTotal=0;
+
+// Variáveis para controle dos modos
+bool primeiraCurva = true;
+int pontosNecessarios = 3; // Número de pontos necessários para criar a curva no modo atual
 
 // **********************************************************************
 // Imprime o texto S na posicao (x,y), com a cor 'cor'
@@ -134,16 +155,23 @@ string Mensagens[] = {
 // **********************************************************************
 void ImprimeMensagens()
 {
+    // Área de status - Mostra o modo atual
+    printString("Modo Atual: " + NomesModos[modoAtual], -14, 13, Yellow);
+    
+    // Instruções para o usuário
     if (nPontoAtual < 3)
-        printString(Mensagens[nPontoAtual], -14, 13, Yellow);
+        printString(Mensagens[nPontoAtual], -14, 11, Yellow);
     else
-        printString("Clique para reiniciar.", -14, 13, Yellow);
+        printString("Clique para reiniciar.", -14, 11, Yellow);
 
     if (nPontoAtual > 0)
     {
-        printString("Ultimo ponto clicado: ", -14, 11, Red);
-        ImprimePonto(PontosClicados[nPontoAtual - 1], -3, 11, Red);
+        printString("Ultimo ponto clicado: ", -14, 9, Red);
+        ImprimePonto(PontosClicados[nPontoAtual - 1], -3, 9, Red);
     }
+    
+    // Instruções adicionais
+    printString("Teclas: 1-Sem Continuidade, 2-Continuidade Posição, 3-Continuidade Derivada", -14, -13, White);
 }
 
 
@@ -222,9 +250,35 @@ void CarregaModelos()
 // **********************************************************************
 //
 // **********************************************************************
-void CriaCurvas()
-{   
-    Curvas[nCurvas] = Bezier(PontosClicados[0], PontosClicados[1], PontosClicados[2]);
+void CriaCurvaNoModoAtual()
+{
+    switch(modoAtual)
+    {
+        case MODO_SEM_CONTINUIDADE:
+            Curvas[nCurvas] = Bezier(PontosClicados[0], PontosClicados[1], PontosClicados[2]);
+            break;
+            
+        case MODO_CONTINUIDADE_POSICAO:
+            if (primeiraCurva) {
+                Curvas[nCurvas] = Bezier(PontosClicados[0], PontosClicados[1], PontosClicados[2]);
+                primeiraCurva = false;
+            } else {
+                Curvas[nCurvas] = Bezier::CriaCurvaComContinuidadePosicao(Curvas[nCurvas-1], 
+                                                                         PontosClicados[1], 
+                                                                         PontosClicados[2]);
+            }
+            break;
+            
+        case MODO_CONTINUIDADE_DERIVADA:
+            if (primeiraCurva) {
+                Curvas[nCurvas] = Bezier(PontosClicados[0], PontosClicados[1], PontosClicados[2]);
+                primeiraCurva = false;
+            } else {
+                Curvas[nCurvas] = Bezier::CriaCurvaComContinuidadeDerivada(Curvas[nCurvas-1], 
+                                                                          PontosClicados[2]);
+            }
+            break;
+    }
     nCurvas++;
 }
 // **********************************************************************
@@ -294,55 +348,206 @@ void DesenhaMenu()
     glPopMatrix();
 }
 // **********************************************************************
+// Desenha a grade de fundo
+// **********************************************************************
+void DesenhaGrade()
+{
+    glColor3f(0.3, 0.3, 0.3);
+    glLineWidth(1);
+    
+    // Linhas verticais
+    for(float x = Min.x; x <= Max.x; x += 1.0) {
+        glBegin(GL_LINES);
+        glVertex2f(x, Min.y);
+        glVertex2f(x, Max.y);
+        glEnd();
+    }
+    
+    // Linhas horizontais
+    for(float y = Min.y; y <= Max.y; y += 1.0) {
+        glBegin(GL_LINES);
+        glVertex2f(Min.x, y);
+        glVertex2f(Max.x, y);
+        glEnd();
+    }
+}
+
+// **********************************************************************
+// Desenha a área de ícones
+// **********************************************************************
+void DesenhaAreaIcones()
+{
+    // Desenha o painel lateral direito
+    glPushMatrix();
+    
+    // Fundo do painel
+    glColor3f(0.2, 0.2, 0.2);
+    glBegin(GL_QUADS);
+    glVertex2f(10, -15);  // Ajustado para cobrir toda a altura
+    glVertex2f(15, -15);
+    glVertex2f(15, 15);
+    glVertex2f(10, 15);
+    glEnd();
+    
+    // Título da área de ícones
+    glColor3f(1.0, 1.0, 1.0);
+    printString("MODOS", 10.5, 13, White);
+    
+    // Desenha os botões dos modos
+    float posY = 11;
+    float altura = 1.5;
+    float espacamento = 2.0;
+    
+    // Modo sem continuidade
+    if (modoAtual == MODO_SEM_CONTINUIDADE)
+        glColor3f(0.8, 0.2, 0.2); // Vermelho mais claro quando selecionado
+    else
+        glColor3f(0.4, 0.4, 0.4);
+    
+    glBegin(GL_QUADS);
+    glVertex2f(10.5, posY);
+    glVertex2f(14.5, posY);
+    glVertex2f(14.5, posY - altura);
+    glVertex2f(10.5, posY - altura);
+    glEnd();
+    printString("1", 11, posY - 1.0, White);
+    printString("Sem Cont.", 11.5, posY - 1.0, White);
+    
+    // Modo continuidade de posição
+    posY -= espacamento;
+    if (modoAtual == MODO_CONTINUIDADE_POSICAO)
+        glColor3f(0.8, 0.2, 0.2);
+    else
+        glColor3f(0.4, 0.4, 0.4);
+    
+    glBegin(GL_QUADS);
+    glVertex2f(10.5, posY);
+    glVertex2f(14.5, posY);
+    glVertex2f(14.5, posY - altura);
+    glVertex2f(10.5, posY - altura);
+    glEnd();
+    printString("2", 11, posY - 1.0, White);
+    printString("Cont. Pos.", 11.5, posY - 1.0, White);
+    
+    // Modo continuidade de derivada
+    posY -= espacamento;
+    if (modoAtual == MODO_CONTINUIDADE_DERIVADA)
+        glColor3f(0.8, 0.2, 0.2);
+    else
+        glColor3f(0.4, 0.4, 0.4);
+    
+    glBegin(GL_QUADS);
+    glVertex2f(10.5, posY);
+    glVertex2f(14.5, posY);
+    glVertex2f(14.5, posY - altura);
+    glVertex2f(10.5, posY - altura);
+    glEnd();
+    printString("3", 11, posY - 1.0, White);
+    printString("Cont. Der.", 11.5, posY - 1.0, White);
+    
+    glPopMatrix();
+}
+
+// **********************************************************************
+// Função para reiniciar o estado quando trocar de modo
+// **********************************************************************
+void ReiniciaEstado()
+{
+    nPontoAtual = 0;
+    primeiraCurva = true;
+    // Limpa as curvas existentes
+    nCurvas = 0;
+    // Reseta os pontos clicados
+    for(int i = 0; i < 3; i++) {
+        PontosClicados[i] = Ponto(0,0,0);
+    }
+}
+
+// **********************************************************************
+// Desenha a área de status
+// **********************************************************************
+void DesenhaAreaStatus()
+{
+    // Desenha o painel inferior
+    glColor3f(0.2, 0.2, 0.2);
+    glBegin(GL_QUADS);
+    glVertex2f(-15, -15);
+    glVertex2f(10, -15);
+    glVertex2f(10, -12);
+    glVertex2f(-15, -12);
+    glEnd();
+    
+    // Informações de status
+    glColor3f(1.0, 1.0, 0.0);
+    string status = "Modo Atual: " + NomesModos[modoAtual];
+    printString(status, -14, -13.5, Yellow);
+    
+    // Mostra instruções baseadas no modo atual
+    string instrucao;
+    if (primeiraCurva) {
+        if (nPontoAtual < 3)
+            instrucao = Mensagens[nPontoAtual];
+        else
+            instrucao = "Clique para reiniciar.";
+    } else {
+        if (modoAtual == MODO_CONTINUIDADE_POSICAO)
+            instrucao = "Clique mais " + to_string(3 - nPontoAtual) + " ponto(s) para continuar a curva";
+        else if (modoAtual == MODO_CONTINUIDADE_DERIVADA)
+            instrucao = "Clique mais " + to_string(2 - nPontoAtual) + " ponto(s) para continuar a curva";
+    }
+    printString(instrucao, -14, -14.5, White);
+}
+
+// **********************************************************************
 //  void display( void )
 // **********************************************************************
 void display( void )
 {
+    // Limpa a tela com cor de fundo
+    glClear(GL_COLOR_BUFFER_BIT);
 
-	// Limpa a tela coma cor de fundo
-	glClear(GL_COLOR_BUFFER_BIT);
-
-    // Define os limites lgicos darea OpenGL dentro da Janela
-	glMatrixMode(GL_MODELVIEW);
+    // Define os limites lógicos da área OpenGL dentro da Janela
+    glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
 
-	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-	// Coloque aqui as chamadas das rotinas que desenham os objetos
-	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+    // Desenha a área de desenho (fundo mais escuro)
+    glColor3f(0.1, 0.1, 0.1);
+    glBegin(GL_QUADS);
+    glVertex2f(-15, -12);
+    glVertex2f(10, -12);
+    glVertex2f(10, 15);
+    glVertex2f(-15, 15);
+    glEnd();
 
-    
+    // Desenha a grade de fundo
+    DesenhaGrade();
 
-	glLineWidth(1);
-	glColor3f(1,1,1); // R, G, B  [0..1]
-
-    DesenhaMenu();
+    // Desenha os eixos
+    glLineWidth(2);
     DesenhaEixos();
 
+    // Desenha as curvas e pontos
     glLineWidth(3);
-    glColor3f(1,0,0);
     DesenhaPontos();
     DesenhaCurvas();
-    ImprimeMensagens();
 
-	
-    // Desenha as linhas de rubber-band
+    // Desenha o rubber-band
     if (nPontoAtual > 0) {
-        defineCor(Red); 
+        defineCor(Red);
         
-        // Desenha linha do primeiro ponto até a posição atual do mouse
         if (nPontoAtual == 1) {
             DesenhaLinha(PontosClicados[0], PosicaoAtualMouse);
         }
         
-        // Desenha linha do primeiro ponto até o segundo ponto e do segundo ponto até a posição atual do mouse
         if (nPontoAtual == 2) {
-            // Desenha a linha fixa entre P1 e P2
             DesenhaLinha(PontosClicados[0], PontosClicados[1]);
-            
-            // Desenha a linha rubber-band entre P2 e a posição atual do mouse
             DesenhaLinha(PontosClicados[1], PosicaoAtualMouse);
         }
     }
+
+    // Desenha as áreas da interface
+    DesenhaAreaIcones();
+    DesenhaAreaStatus();
 
     glutSwapBuffers();
 }
@@ -373,21 +578,42 @@ void ContaTempo(double tempo)
 // **********************************************************************
 void keyboard ( unsigned char key, int x, int y )
 {
-
-	switch ( key )
-	{
-		case 27:        // Termina o programa qdo
-			exit ( 0 );   // a tecla ESC for pressionada
-			break;
+    switch ( key )
+    {
+        case 27:        // Termina o programa qdo
+            exit ( 0 );   // a tecla ESC for pressionada
+            break;
         case 't':
             ContaTempo(3);
             break;
         case ' ':
             desenha = !desenha;
-        break;
-		default:
-			break;
-	}
+            break;
+        case '1':
+            if (modoAtual != MODO_SEM_CONTINUIDADE) {
+                modoAtual = MODO_SEM_CONTINUIDADE;
+                ReiniciaEstado();
+                cout << "Modo alterado para: Sem Continuidade" << endl;
+            }
+            break;
+        case '2':
+            if (modoAtual != MODO_CONTINUIDADE_POSICAO) {
+                modoAtual = MODO_CONTINUIDADE_POSICAO;
+                ReiniciaEstado();
+                cout << "Modo alterado para: Continuidade de Posição" << endl;
+            }
+            break;
+        case '3':
+            if (modoAtual != MODO_CONTINUIDADE_DERIVADA) {
+                modoAtual = MODO_CONTINUIDADE_DERIVADA;
+                ReiniciaEstado();
+                cout << "Modo alterado para: Continuidade de Derivada" << endl;
+            }
+            break;
+        default:
+            break;
+    }
+    glutPostRedisplay();
 }
 // **********************************************************************
 //  void arrow_keys ( int a_keys, int x, int y )
@@ -439,7 +665,7 @@ Ponto ConvertePonto(Ponto P)
 // Captura o clique do botao esquerdo do mouse sobre a área de
 // desenho
 // **********************************************************************
-void Mouse(int button,int state,int x,int y)
+void Mouse(int button, int state, int x, int y)
 {
     if (button != GLUT_LEFT_BUTTON)
         return;
@@ -447,24 +673,63 @@ void Mouse(int button,int state,int x,int y)
     if (state == GLUT_DOWN) {
         mouseSegurando = true;
 
-        if (nPontoAtual == 0) {
-            PontosClicados[0] = ConvertePonto(Ponto(x, y, 0));
-            nPontoAtual = 1;
+        // No modo sem continuidade, sempre precisamos de 3 pontos
+        if (modoAtual == MODO_SEM_CONTINUIDADE) {
+            if (nPontoAtual == 0) {
+                PontosClicados[0] = ConvertePonto(Ponto(x, y, 0));
+                nPontoAtual = 1;
+            }
+            else if (nPontoAtual == 1) {
+                PontosClicados[1] = ConvertePonto(Ponto(x, y, 0));
+                nPontoAtual = 2;
+            }
+            else if (nPontoAtual == 2) {
+                PontosClicados[2] = ConvertePonto(Ponto(x, y, 0));
+                CriaCurvaNoModoAtual();
+                nPontoAtual = 0;
+            }
         }
-        else if (nPontoAtual == 1) {
-            // Quando clicar para definir o segundo ponto
-            PontosClicados[1] = ConvertePonto(Ponto(x, y, 0));
-            nPontoAtual = 2;
+        // Nos modos com continuidade
+        else {
+            if (primeiraCurva) {
+                // Para a primeira curva, precisamos de 3 pontos
+                if (nPontoAtual == 0) {
+                    PontosClicados[0] = ConvertePonto(Ponto(x, y, 0));
+                    nPontoAtual = 1;
+                }
+                else if (nPontoAtual == 1) {
+                    PontosClicados[1] = ConvertePonto(Ponto(x, y, 0));
+                    nPontoAtual = 2;
+                }
+                else if (nPontoAtual == 2) {
+                    PontosClicados[2] = ConvertePonto(Ponto(x, y, 0));
+                    CriaCurvaNoModoAtual();
+                    nPontoAtual = 1; // Próxima curva precisa de 2 pontos
+                    PontosClicados[0] = Curvas[nCurvas-1].getPontoFinal();
+                }
+            }
+            else {
+                // Para as curvas subsequentes
+                if (nPontoAtual == 1) {
+                    if (modoAtual == MODO_CONTINUIDADE_POSICAO) {
+                        PontosClicados[1] = ConvertePonto(Ponto(x, y, 0));
+                        nPontoAtual = 2;
+                    }
+                    else { // MODO_CONTINUIDADE_DERIVADA
+                        PontosClicados[2] = ConvertePonto(Ponto(x, y, 0));
+                        CriaCurvaNoModoAtual();
+                        nPontoAtual = 1;
+                        PontosClicados[0] = Curvas[nCurvas-1].getPontoFinal();
+                    }
+                }
+                else if (nPontoAtual == 2) {
+                    PontosClicados[2] = ConvertePonto(Ponto(x, y, 0));
+                    CriaCurvaNoModoAtual();
+                    nPontoAtual = 1;
+                    PontosClicados[0] = Curvas[nCurvas-1].getPontoFinal();
+                }
+            }
         }
-        else if (nPontoAtual == 2) {
-            // Quando clicar para definir o terceiro ponto
-            PontosClicados[2] = ConvertePonto(Ponto(x, y, 0));
-            CriaCurvas(); // Cria a curva de Bézier
-            nPontoAtual = 0; // Reinicia para criar uma nova curva
-        }
-    }
-    else if (state == GLUT_UP) {
-        mouseSegurando = false;
     }
 
     glutPostRedisplay();

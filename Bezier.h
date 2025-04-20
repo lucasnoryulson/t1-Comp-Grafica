@@ -42,10 +42,16 @@ public:
     Bezier(Ponto V[]);
     Ponto Calcula(double t);
     Ponto getPC(int i);
+    void setPC(int i, Ponto P);
     void Traca();
     void TracaPoligonoDeControle();
     double CalculaT(double distanciaPercorrida);
     void calculaComprimentoDaCurva();
+    
+    Ponto getPontoFinal() { return Coords[2]; }
+    Ponto getDirecaoFinal() { return (Coords[2] - Coords[1]) * 2; }
+    static Bezier CriaCurvaComContinuidadePosicao(const Bezier& curvaAnterior, Ponto P1, Ponto P2);
+    static Bezier CriaCurvaComContinuidadeDerivada(const Bezier& curvaAnterior, Ponto P2);
 };
 
 #endif 
