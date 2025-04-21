@@ -390,6 +390,31 @@ void DesenhaCurvas()
         Curvas[i].Traca();
         defineCor(Brown);
         Curvas[i].TracaPoligonoDeControle();
+        
+        // Destaca o ponto final se estiver no modo de alteração de continuidade
+        if(modoEdicao == MODO_ALTERAR_CONTINUIDADE && i < nCurvas-1) {
+            glPointSize(10);
+            glColor3f(1.0, 0.0, 0.0); // Vermelho
+            glBegin(GL_POINTS);
+            glVertex2f(Curvas[i].getPC(2).x, Curvas[i].getPC(2).y);
+            glEnd();
+            glPointSize(1);
+        }
+        
+        // Destaca os pontos iniciais e finais no modo conectar
+        if(modoEdicao == MODO_CONECTAR_CURVA) {
+            glPointSize(12);
+            glColor3f(0.0, 1.0, 0.0); // Verde para ponto inicial
+            glBegin(GL_POINTS);
+            glVertex2f(Curvas[i].getPC(0).x, Curvas[i].getPC(0).y);
+            glEnd();
+            
+            glColor3f(1.0, 0.0, 0.0); // Vermelho para ponto final
+            glBegin(GL_POINTS);
+            glVertex2f(Curvas[i].getPC(2).x, Curvas[i].getPC(2).y);
+            glEnd();
+            glPointSize(1);
+        }
     }
 }
 // **********************************************************************
@@ -991,36 +1016,65 @@ void Mouse(int button, int state, int x, int y)
             case MODO_CONECTAR_CURVA:
                 if(clicouEmCurva && (verticeIndex == 0 || verticeIndex == 2)) {
                     // Inicia uma nova curva a partir do vértice selecionado
-                    PontosClicados[0] = Curvas[curvaIndex].getPC(verticeIndex);
+                    PontosClicados[0] = Curvas[curvaIndex].getPC(verticeIndex);  // Usa exatamente o ponto que foi clicado
                     nPontoAtual = 1;
                     curvaEmEdicao = curvaIndex;
                     verticeEmEdicao = verticeIndex;
+                    
+                    // Muda para o modo de criação
+                    modoEdicao = MODO_CRIAR;
+                    for (auto& b : botoesEdicao) {
+                        b.selecionado = (b.modo == MODO_CRIAR);
+                    }
+                    
+                    // Se não for a primeira curva, aplica o modo de continuidade atual
+                    if (!primeiraCurva) {
+                        if (modoAtual == MODO_CONTINUIDADE_POSICAO) {
+                            // No modo de continuidade de posição, apenas precisamos do próximo ponto
+                            // O primeiro ponto já foi definido acima
+                        }
+                        else if (modoAtual == MODO_CONTINUIDADE_DERIVADA) {
+                            // No modo de continuidade de derivada, calculamos o próximo ponto
+                            // baseado na direção da curva existente
+                            Ponto p0, p1;
+                            if(verticeIndex == 0) {
+                                // Se conectando ao início, usa os dois primeiros pontos
+                                p0 = Curvas[curvaIndex].getPC(0);
+                                p1 = Curvas[curvaIndex].getPC(1);
+                            } else {
+                                // Se conectando ao fim, usa os dois últimos pontos
+                                p0 = Curvas[curvaIndex].getPC(2);
+                                p1 = Curvas[curvaIndex].getPC(1);
+                            }
+                            
+                            // Calcula a direção e o próximo ponto de controle
+                            Ponto direcao = p0 - p1;
+                            PontosClicados[1] = p0 + direcao;
+                            nPontoAtual = 2; // Já temos dois pontos definidos
+                        }
+                    }
                 }
                 break;
                 
-            case MODO_ALTERAR_CONTINUIDADE:
-                if(clicouEmCurva && verticeIndex == 2) {
-                    // Procura se já existe continuidade com próxima curva
-                    auto it = find_if(continuidades.begin(), continuidades.end(),
-                        [curvaIndex](const ContinuidadeCurvas& c) {
-                            return c.curva1 == curvaIndex;
-                        }
-                    );
-                    
-                    if(it != continuidades.end()) {
-                        // Aumenta o grau de continuidade ou remove se já estiver no máximo
-                        if(it->tipoContinuidade == 2)
-                            continuidades.erase(it);
-                        else
-                            it->tipoContinuidade++;
-                    }
-                    else if(curvaIndex < nCurvas-1) {
-                        // Cria nova continuidade
-                        continuidades.push_back({curvaIndex, curvaIndex+1, 1});
-                    }
-                    AtualizaCurvasRelacionadas(curvaIndex);
+                case MODO_ALTERAR_CONTINUIDADE:
+                int curvaSelecionada = -1;
+
+                // Clique no ponto final da curva atual
+                if (verticeIndex == 2 && curvaIndex < nCurvas - 1) {
+                    curvaSelecionada = curvaIndex;
                 }
-                break;
+                // Clique no ponto inicial da próxima curva
+                else if (verticeIndex == 0) {
+                    if (curvaIndex == 0 && nCurvas > 1) {
+                        // Curva 0 clicada, podemos tentar ligar com curva 1
+                        curvaSelecionada = 0;
+                    } else if (curvaIndex > 0) {
+                        // Em curvas intermediárias, conecta com a curva anterior
+                        curvaSelecionada = curvaIndex - 1;
+                    }
+                }
+                
+            
         }
     }
     else if (state == GLUT_UP) {
@@ -1068,54 +1122,77 @@ void Motion(int x, int y)
 // **********************************************************************
 bool VerificaCliqueCurva(Ponto ponto, int& curvaIndex, int& pontoIndex)
 {
-    const float TOLERANCIA = 5.0; // Tolerância em pixels para detecção de clique
+    const float TOLERANCIA = 0.5; // Reduzindo a tolerância para ser mais preciso
+    float menorDistancia = 999999;
+    bool encontrou = false;
     
     // Verifica clique nos pontos de controle
     for(int i = 0; i < nCurvas; i++) {
-        for(int j = 0; j < 3; j++) {  // Uma curva de Bezier tem 3 pontos de controle
-            if(calculaDistanciaEntrePontos(ponto, Curvas[i].getPC(j)) < TOLERANCIA) {
-                curvaIndex = i;
-                pontoIndex = j;
-                return true;
-            }
+        // Verifica apenas os pontos inicial e final (0 e 2)
+        float distInicial = calculaDistanciaEntrePontos(ponto, Curvas[i].getPC(0));
+        float distFinal = calculaDistanciaEntrePontos(ponto, Curvas[i].getPC(2));
+        
+        if(distInicial < TOLERANCIA && distInicial < menorDistancia) {
+            menorDistancia = distInicial;
+            curvaIndex = i;
+            pontoIndex = 0;
+            encontrou = true;
+        }
+        
+        if(distFinal < TOLERANCIA && distFinal < menorDistancia) {
+            menorDistancia = distFinal;
+            curvaIndex = i;
+            pontoIndex = 2;
+            encontrou = true;
         }
     }
-    
-    // Verifica clique nas arestas do polígono de controle
-    for(int i = 0; i < nCurvas; i++) {
-        for(int j = 0; j < 2; j++) {  // 2 arestas no polígono de controle
-            if(DistanciaPontoReta(ponto, Curvas[i].getPC(j), Curvas[i].getPC(j+1)) < TOLERANCIA &&
-               ponto.x >= min(Curvas[i].getPC(j).x, Curvas[i].getPC(j+1).x) - TOLERANCIA &&
-               ponto.x <= max(Curvas[i].getPC(j).x, Curvas[i].getPC(j+1).x) + TOLERANCIA &&
-               ponto.y >= min(Curvas[i].getPC(j).y, Curvas[i].getPC(j+1).y) - TOLERANCIA &&
-               ponto.y <= max(Curvas[i].getPC(j).y, Curvas[i].getPC(j+1).y) + TOLERANCIA) {
-                curvaIndex = i;
-                pontoIndex = j;
-                return true;
-            }
-        }
-    }
-    
-    return false;
+    return encontrou;
 }
 
 void AtualizaCurvasRelacionadas(int curvaIndex)
 {
-    // Atualiza as curvas que têm continuidade com a curva modificada
-    for(auto& cont : continuidades) {
-        if(cont.curva1 == curvaIndex) {
-            if(cont.tipoContinuidade == 1) { // Continuidade de posição
-                Curvas[cont.curva2].setPC(0, Curvas[curvaIndex].getPontoFinal());
+    for (auto& cont : continuidades) {
+        if (cont.curva1 == curvaIndex && cont.curva2 < nCurvas) {
+            cout << "Atualizando continuidade entre curvas " << cont.curva1 << " e " << cont.curva2 << endl;
+
+            Bezier& curva1 = Curvas[cont.curva1];
+            Bezier& curva2 = Curvas[cont.curva2];
+
+            if (cont.tipoContinuidade == MODO_CONTINUIDADE_POSICAO) {
+                // Continuidade de posição: o ponto inicial da próxima curva
+                // deve ser igual ao ponto final da curva anterior.
+                curva2.setPC(0, curva1.getPC(2));
+                cout << "→ Aplicada continuidade de POSIÇÃO\n";
             }
-            else if(cont.tipoContinuidade == 2) { // Continuidade de derivada
-                Ponto p0 = Curvas[curvaIndex].getPontoFinal();
-                Ponto dir = Curvas[curvaIndex].getDirecaoFinal();
-                Curvas[cont.curva2].setPC(0, p0);
-                Curvas[cont.curva2].setPC(1, p0 + dir);
+
+            else if (cont.tipoContinuidade == MODO_CONTINUIDADE_DERIVADA) {
+                // Continuidade de derivada: além de coincidir os pontos, 
+                // deve alinhar o controle da tangente (espelhar a direção).
+                Ponto pFinal = curva1.getPC(2);
+                Ponto pAntesFinal = curva1.getPC(1);
+                Ponto direcao = pFinal - pAntesFinal;
+
+                Ponto p1Novo = pFinal + direcao;
+                curva2.setPC(0, pFinal);
+                curva2.setPC(1, p1Novo);
+
+                // Para manter a forma da curva, ajusta o ponto final (PC2) mantendo a distância.
+                float dist = calculaDistanciaEntrePontos(curva2.getPC(2), pFinal);
+                Ponto normalizada = direcao * (1.0 / sqrt(direcao.x * direcao.x + direcao.y * direcao.y));
+                Ponto novoP2 = p1Novo + normalizada * dist;
+
+                curva2.setPC(2, novoP2);
+                cout << "→ Aplicada continuidade de DERIVADA (ajustando tangente e extensão)\n";
+            }
+
+            else {
+                cout << "→ Modo de continuidade desconhecido!\n";
             }
         }
     }
 }
+
+
 
 // **********************************************************************
 // Funções auxiliares
